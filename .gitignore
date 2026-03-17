@@ -1,5 +1,41 @@
-bin/
-obj/
+## .gitignore for Blazor / .NET project
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+bld/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# MSBuild
+*.binlog
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
+
+# ASP.NET Scaffolding
+ScaffoldingReadMe.txt
+
+# IDE
 .vs/
 *.user
 .DS_Store
+~$*
+*~
