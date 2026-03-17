@@ -1,0 +1,20 @@
+@inherits LayoutComponentBase
+
+<header class="app-topbar">
+    <div class="d-flex align-items-center gap-3">
+        <div class="app-logo-mark"></div>
+        <div>
+            <div class="app-title">TradeSim</div>
+            <div class="app-subtitle">Paper Trading Simulator</div>
+        </div>
+    </div>
+    <div class="app-topbar-right">
+        <span class="market-badge">PAPER TRADING</span>
+    </div>
+</header>
+
+<main class="app-main">
+    <div class="container-fluid px-4 py-3">
+        @Body
+    </div>
+</main>

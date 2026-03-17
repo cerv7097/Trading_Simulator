@@ -1,0 +1,549 @@
+@page "/"
+@using BlazorTradingApp.Models
+@using BlazorTradingApp.Services
+@using ApexCharts
+
+@inject TradingSimulator Simulator
+@inject TwelveDataService DataService
+@inject PriceForecaster Forecaster
+
+<!-- ── Config panel ─────────────────────────────────────────────────────────── -->
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Configuration</div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-sm-3">
+                <label class="form-label">Symbol</label>
+                <input @bind="Symbol" class="form-control" placeholder="AAPL" />
+                <div class="form-text">Ticker symbol of the stock (e.g. AAPL = Apple, MSFT = Microsoft).</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Interval</label>
+                <select @bind="Interval" class="form-select">
+                    <option value="1h">1 Hour</option>
+                    <option value="4h">4 Hour</option>
+                    <option value="1day">1 Day</option>
+                    <option value="1week">1 Week</option>
+                </select>
+                <div class="form-text">How much time each candle on the chart represents.</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Portfolio Balance ($)</label>
+                <input @bind="Config.PortfolioBalance" type="number" class="form-control" />
+                <div class="form-text">Starting amount of cash available to trade with.</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Risk Per Trade (%)</label>
+                <input @bind="Config.RiskPerTradePercent" type="number" class="form-control" />
+                <div class="form-text">Percentage of your portfolio spent on each buy. E.g. 10% of $10,000 = $1,000 deployed per trade.</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Stop-Loss (%)</label>
+                <input @bind="Config.StopLossPercent" type="number" class="form-control" />
+                <div class="form-text">Automatically sells if the price drops this % below your buy price — limits how much you can lose on one trade.</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Take-Profit (%)</label>
+                <input @bind="Config.TakeProfitPercent" type="number" class="form-control" />
+                <div class="form-text">Automatically sells if the price rises this % above your buy price — locks in gains before the price can reverse.</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Commission Per Trade ($)</label>
+                <input @bind="Config.CommissionPerTrade" type="number" class="form-control" />
+                <div class="form-text">Flat fee charged by a broker for each buy or sell order (e.g. $1 per trade).</div>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label">Slippage (%)</label>
+                <input @bind="Config.SlippagePercent" type="number" step="0.1" class="form-control" />
+                <div class="form-text">The difference between expected and actual fill price. Buys fill slightly higher; sells fill slightly lower.</div>
+            </div>
+        </div>
+        <button class="btn btn-primary mt-3" @onclick="RunSimulation" disabled="@IsLoading">
+            @(IsLoading ? "Loading…" : "Run Simulation")
+        </button>
+    </div>
+</div>
+
+<!-- ── Glossary ──────────────────────────────────────────────────────────── -->
+<details class="mb-4">
+    <summary class="btn btn-outline-secondary btn-sm">Glossary — Terms &amp; Acronyms</summary>
+    <div class="card mt-2">
+        <div class="card-body p-0">
+            <table class="table table-sm table-bordered mb-0">
+                <thead class="table-light">
+                    <tr><th style="width:180px">Term</th><th>What it means</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Symbol / Ticker</strong></td><td>A short code that identifies a publicly traded company on a stock exchange (e.g. AAPL = Apple Inc.).</td></tr>
+                    <tr><td><strong>Interval / Candle</strong></td><td>The time window each bar on the chart covers. A "1-hour" candle shows price movement over one hour.</td></tr>
+                    <tr><td><strong>OHLC</strong></td><td><strong>O</strong>pen, <strong>H</strong>igh, <strong>L</strong>ow, <strong>C</strong>lose — the four prices recorded for each candle. Open = first trade price; High/Low = extremes; Close = last trade price.</td></tr>
+                    <tr><td><strong>Candlestick Chart</strong></td><td>A chart type where each bar shows OHLC data. Green candles = price rose; red candles = price fell. The thin lines (wicks) show the High and Low.</td></tr>
+                    <tr><td><strong>Volume</strong></td><td>The number of shares traded during the candle's time window. High volume often signals stronger price moves.</td></tr>
+                    <tr><td><strong>SMA</strong></td><td><strong>S</strong>imple <strong>M</strong>oving <strong>A</strong>verage — the average closing price over the last N candles. SMA20 = 20-candle average (short-term trend). SMA50 = 50-candle average (longer-term trend).</td></tr>
+                    <tr><td><strong>SMA Crossover</strong></td><td>The strategy signal used here. A BUY is triggered when SMA20 crosses above SMA50 (uptrend). A SELL is triggered when SMA20 crosses back below SMA50 (downtrend).</td></tr>
+                    <tr><td><strong>RSI</strong></td><td><strong>R</strong>elative <strong>S</strong>trength <strong>I</strong>ndex — a 0–100 momentum indicator. Above 70 = overbought (price may drop soon). Below 30 = oversold (price may rise soon).</td></tr>
+                    <tr><td><strong>MACD</strong></td><td><strong>M</strong>oving <strong>A</strong>verage <strong>C</strong>onvergence <strong>D</strong>ivergence — shows the difference between a fast EMA (12) and slow EMA (26). Used to spot momentum shifts.</td></tr>
+                    <tr><td><strong>EMA</strong></td><td><strong>E</strong>xponential <strong>M</strong>oving <strong>A</strong>verage — like an SMA but gives more weight to recent prices, so it reacts faster to changes.</td></tr>
+                    <tr><td><strong>MACD Signal Line</strong></td><td>A 9-period EMA of the MACD line itself. When MACD crosses above the signal line it's often seen as bullish; below is bearish.</td></tr>
+                    <tr><td><strong>MACD Histogram</strong></td><td>The difference between the MACD line and its signal line. Bars above zero = bullish momentum; below zero = bearish.</td></tr>
+                    <tr><td><strong>Stop-Loss</strong></td><td>A pre-set exit price below your buy price. It limits losses by automatically closing the trade if the price falls too far.</td></tr>
+                    <tr><td><strong>Take-Profit</strong></td><td>A pre-set exit price above your buy price. It locks in gains by automatically closing the trade when a target is hit.</td></tr>
+                    <tr><td><strong>Slippage</strong></td><td>The difference between the price you expected and the price you actually got filled at. Happens because markets move in the fractions of a second it takes to execute an order.</td></tr>
+                    <tr><td><strong>Commission</strong></td><td>A fee charged by a broker each time you place a buy or sell order.</td></tr>
+                    <tr><td><strong>Position Sizing</strong></td><td>Deciding how much money to put into each trade. Here it is expressed as a % of your total portfolio balance.</td></tr>
+                    <tr><td><strong>Win Rate</strong></td><td>The percentage of closed trades that ended with a profit. E.g. 60% means 6 out of every 10 trades were winners.</td></tr>
+                    <tr><td><strong>Max Drawdown</strong></td><td>The largest peak-to-trough drop in portfolio value during the simulation. Measures the worst losing streak you would have experienced.</td></tr>
+                    <tr><td><strong>Equity Curve</strong></td><td>A line chart of your portfolio's total value over time. A steadily rising curve = consistent profits. Sharp drops = drawdown periods.</td></tr>
+                    <tr><td><strong>BUY / SELL</strong></td><td>BUY = entering a trade (purchasing shares). SELL = exiting a trade (selling shares). Profit is realised on the SELL.</td></tr>
+                    <tr><td><strong>Exit Reason</strong></td><td><em>Signal</em> = SMA crossover triggered the exit. <em>StopLoss</em> = price fell to stop-loss level. <em>TakeProfit</em> = price hit the profit target. <em>AutoSell</em> = position closed at end of data.</td></tr>
+                    <tr><td><strong>Fill Price</strong></td><td>The actual price the order was executed at (after slippage is applied).</td></tr>
+                    <tr><td><strong>Paper Trading</strong></td><td>Simulated trading using real market prices but fake money — what this app does. No real money is at risk.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</details>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (Result != null)
+{
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-label">Total Profit</div>
+                <div class="stat-value @(Result.TotalProfit >= 0 ? "positive" : "negative")">
+                    @Result.TotalProfit.ToString("C")
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-label">Closed Trades</div>
+                <div class="stat-value neutral">@SellCount</div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value @(WinRate >= 50 ? "positive" : "negative")">
+                    @WinRate.ToString("F1")%
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="stat-card">
+                <div class="stat-label">Max Drawdown</div>
+                <div class="stat-value danger">
+                    @Result.MaxDrawdown.ToString("C")
+                    <small style="font-size:.85rem">(@Result.MaxDrawdownPercent.ToString("F1")%)</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Candlestick + SMA chart ───────────────────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">
+            Price Chart — @Symbol.ToUpper() (@Interval) — Candlestick
+            <small class="text-muted fw-normal ms-2">Each bar shows Open, High, Low, Close for one @Interval period. Green = price rose. Red = price fell. <strong>SMA20</strong> (green line) = 20-candle average. <strong>SMA50</strong> (red line) = 50-candle average. A BUY signal fires when SMA20 crosses above SMA50.</small>
+        </div>
+        <div class="card-body" style="height:420px;">
+            <ApexChart TItem="StockPrice" Options="CandleOptions" @ref="CandleChart">
+                <ApexCandleSeries TItem="StockPrice"
+                    Items="Prices"
+                    Name="@Symbol.ToUpper()"
+                    XValue="@(e => e.Date)"
+                    Open="@(e => e.Open)"
+                    High="@(e => e.High)"
+                    Low="@(e => e.Low)"
+                    Close="@(e => e.Close)" />
+
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.SMA20.HasValue).ToList()"
+                    Name="SMA20"
+                    SeriesType="SeriesType.Line"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.SMA20 ?? 0)"
+                    Color="#2ca02c" />
+
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.SMA50.HasValue).ToList()"
+                    Name="SMA50"
+                    SeriesType="SeriesType.Line"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.SMA50 ?? 0)"
+                    Color="#d62728" />
+            </ApexChart>
+        </div>
+    </div>
+
+    <!-- ── RSI chart ─────────────────────────────────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">
+            RSI (14) — Relative Strength Index
+            <small class="text-muted fw-normal ms-2">Measures momentum on a 0–100 scale. Above 70 = overbought (price may fall). Below 30 = oversold (price may rise). Calculated over the last 14 candles.</small>
+        </div>
+        <div class="card-body" style="height:220px;">
+            <ApexChart TItem="StockPrice" Options="RsiOptions">
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.RSI.HasValue).ToList()"
+                    Name="RSI"
+                    SeriesType="SeriesType.Line"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.RSI ?? 0)"
+                    Color="#9467bd" />
+            </ApexChart>
+        </div>
+    </div>
+
+    <!-- ── MACD chart ─────────────────────────────────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">
+            MACD (12, 26, 9) — Moving Average Convergence Divergence
+            <small class="text-muted fw-normal ms-2">Shows momentum by comparing two EMAs. <strong>MACD line</strong> = 12-period EMA minus 26-period EMA. <strong>Signal line</strong> = 9-period EMA of the MACD line. <strong>Histogram</strong> = gap between them — bars above zero are bullish, below zero are bearish.</small>
+        </div>
+        <div class="card-body" style="height:220px;">
+            <ApexChart TItem="StockPrice" Options="MacdOptions">
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.MACD.HasValue).ToList()"
+                    Name="MACD"
+                    SeriesType="SeriesType.Line"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.MACD ?? 0)"
+                    Color="#1f77b4" />
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.MACDSignal.HasValue).ToList()"
+                    Name="Signal"
+                    SeriesType="SeriesType.Line"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.MACDSignal ?? 0)"
+                    Color="#ff7f0e" />
+                <ApexPointSeries TItem="StockPrice"
+                    Items="Prices.Where(p => p.MACDHistogram.HasValue).ToList()"
+                    Name="Histogram"
+                    SeriesType="SeriesType.Bar"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.MACDHistogram ?? 0)"
+                    Color="#aec7e8" />
+            </ApexChart>
+        </div>
+    </div>
+
+    <!-- ── Price Forecast ───────────────────────────────────────────────────── -->
+    @if (Forecast != null)
+    {
+        <div class="card mb-4 border-warning">
+            <div class="card-header fw-semibold bg-warning-subtle">
+                Monte Carlo Price Forecast — ~1 Month Ahead (@ForecastPeriods candles, @Interval interval)
+                <small class="text-muted fw-normal ms-2">
+                    Based on Geometric Brownian Motion (GBM). Drift: @Forecast.DriftPerPeriod.ToString("+0.0000;-0.0000") per candle.
+                    Volatility: @Forecast.VolatilityPerPeriod.ToString("P2") per candle. Last price: @Forecast.LastPrice.ToString("C").
+                </small>
+            </div>
+            <div class="card-body" style="height:360px;">
+                <ApexChart TItem="ForecastPoint" Options="ForecastOptions">
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.History"
+                        Name="Actual Price"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)e.Price)"
+                        Color="#1f77b4" />
+
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.Projection"
+                        Name="Forecast Median (P50)"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)e.Price)"
+                        Color="#ff7f0e" />
+
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.Projection.Where(p => p.P75.HasValue).ToList()"
+                        Name="75th Percentile"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)(e.P75 ?? e.Price))"
+                        Color="#2ca02c" />
+
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.Projection.Where(p => p.P25.HasValue).ToList()"
+                        Name="25th Percentile"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)(e.P25 ?? e.Price))"
+                        Color="#2ca02c" />
+
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.Projection.Where(p => p.P90.HasValue).ToList()"
+                        Name="90th Percentile"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)(e.P90 ?? e.Price))"
+                        Color="#d62728" />
+
+                    <ApexPointSeries TItem="ForecastPoint"
+                        Items="Forecast.Projection.Where(p => p.P10.HasValue).ToList()"
+                        Name="10th Percentile"
+                        SeriesType="SeriesType.Line"
+                        XValue="@(e => e.Date)"
+                        YValue="@(e => (decimal)(e.P10 ?? e.Price))"
+                        Color="#d62728" />
+                </ApexChart>
+            </div>
+            <div class="card-footer text-muted small">
+                <strong>How to read this:</strong>
+                The <span style="color:#ff7f0e;font-weight:bold">orange line</span> is the median expected price (half of all simulated paths end above it, half below).
+                <span style="color:#2ca02c;font-weight:bold">Green lines</span> = 25th–75th percentile band (the "most likely" zone — 50% of paths fall here).
+                <span style="color:#d62728;font-weight:bold">Red lines</span> = 10th–90th percentile band (80% of paths fall within these extremes).
+                The wider the bands, the more uncertain the outlook.
+                <strong class="text-danger ms-2">⚠ Not financial advice. Past volatility does not predict future prices.</strong>
+            </div>
+        </div>
+    }
+
+    <!-- ── Equity curve ──────────────────────────────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">
+            Portfolio Equity Curve
+            <small class="text-muted fw-normal ms-2">Your portfolio's total value over time, including any open position marked to the current price. A rising line = growing account. Dips show drawdown periods.</small>
+        </div>
+        <div class="card-body" style="height:280px;">
+            <ApexChart TItem="EquityPoint" Options="EquityOptions">
+                <ApexPointSeries TItem="EquityPoint"
+                    Items="Result.EquityCurve"
+                    Name="Portfolio Value"
+                    SeriesType="SeriesType.Area"
+                    XValue="@(e => e.Date)"
+                    YValue="@(e => e.PortfolioValue)"
+                    Color="#17becf" />
+            </ApexChart>
+        </div>
+    </div>
+
+    <!-- ── Trade table ───────────────────────────────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header fw-semibold">Trade Log</div>
+        <div class="card-body p-0">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Action</th>
+                        <th>Shares</th>
+                        <th>Fill Price</th>
+                        <th>Commission</th>
+                        <th>Profit</th>
+                        <th>Exit Reason</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var trade in Result.Trades)
+                    {
+                        <tr class="@(trade.Action == "BUY" ? "table-primary" : trade.Profit >= 0 ? "table-success" : "table-danger")">
+                            <td>@trade.Date.ToString("MM/dd/yy HH:mm")</td>
+                            <td><strong>@trade.Action</strong></td>
+                            <td>@trade.Shares.ToString("F2")</td>
+                            <td>@trade.Price.ToString("C")</td>
+                            <td>@trade.Commission.ToString("C")</td>
+                            <td>@(trade.Profit.HasValue ? trade.Profit.Value.ToString("C") : "—")</td>
+                            <td>@(trade.ExitReason ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private string Symbol   = "AAPL";
+    private string Interval = "1h";
+    private bool   IsLoading;
+    private string? ErrorMessage;
+
+    private SimulationConfig Config = new();
+    private SimulationResult? Result;
+    private ForecastResult?   Forecast;
+
+    private int    SellCount => Result?.Trades.Count(t => t.Action == "SELL") ?? 0;
+    private double WinRate   => SellCount > 0
+        ? (double)(Result!.Trades.Count(t => t.Action == "SELL" && t.Profit > 0)) / SellCount * 100 : 0;
+    private List<StockPrice>  Prices = new();
+    // 30 calendar days expressed in candles for each supported interval.
+    private int ForecastPeriods => Interval switch
+    {
+        "1h"    => 720,  // 30 days × 24 hours
+        "4h"    => 180,  // 30 days × 6 four-hour blocks
+        "1day"  => 30,   // 30 calendar days
+        "1week" => 4,    // ~4 weeks
+        _       => 30
+    };
+
+    private ApexChart<StockPrice>? CandleChart;
+
+    // ── Chart options ────────────────────────────────────────────────────────
+    private ApexChartOptions<StockPrice> CandleOptions = new()
+    {
+        Chart = new Chart
+        {
+            Type   = ChartType.Candlestick,
+            Height = 400,
+            Zoom   = new Zoom { Enabled = true },
+            Toolbar = new Toolbar { Show = true }
+        },
+        Xaxis = new XAxis { Type = XAxisType.Datetime },
+        Yaxis = new List<YAxis>
+        {
+            new YAxis
+            {
+                Labels = new YAxisLabels
+                {
+                    Formatter = "function(v){ return '$' + v.toFixed(2); }"
+                }
+            }
+        },
+        Tooltip = new Tooltip { Shared = false },
+        Legend  = new Legend { Position = LegendPosition.Top }
+    };
+
+    private ApexChartOptions<StockPrice> RsiOptions = new()
+    {
+        Chart = new Chart { Type = ChartType.Line, Height = 200 },
+        Xaxis = new XAxis { Type = XAxisType.Datetime },
+        Yaxis = new List<YAxis>
+        {
+            new YAxis { Min = 0, Max = 100 }
+        },
+        Annotations = new Annotations
+        {
+            Yaxis = new List<AnnotationsYAxis>
+            {
+                new AnnotationsYAxis { Y = 70, BorderColor = "#d62728", Label = new Label { Text = "Overbought" } },
+                new AnnotationsYAxis { Y = 30, BorderColor = "#2ca02c", Label = new Label { Text = "Oversold" } }
+            }
+        }
+    };
+
+    private ApexChartOptions<StockPrice> MacdOptions = new()
+    {
+        Chart = new Chart { Type = ChartType.Line, Height = 200 },
+        Xaxis = new XAxis { Type = XAxisType.Datetime },
+        Stroke = new Stroke { Width = new List<int> { 2, 2, 0 } }
+    };
+
+    private ApexChartOptions<EquityPoint> EquityOptions = new()
+    {
+        Chart = new Chart { Type = ChartType.Area, Height = 260 },
+        Xaxis = new XAxis { Type = XAxisType.Datetime },
+        Yaxis = new List<YAxis>
+        {
+            new YAxis
+            {
+                Labels = new YAxisLabels
+                {
+                    Formatter = "function(v){ return '$' + v.toFixed(2); }"
+                }
+            }
+        },
+        Fill = new Fill { Type = FillType.Gradient }
+    };
+
+    private ApexChartOptions<ForecastPoint> ForecastOptions = new()
+    {
+        Chart = new Chart
+        {
+            Type    = ChartType.Line,
+            Height  = 340,
+            Zoom    = new Zoom { Enabled = true },
+            Toolbar = new Toolbar { Show = true }
+        },
+        Xaxis = new XAxis { Type = XAxisType.Datetime },
+        Yaxis = new List<YAxis>
+        {
+            new YAxis
+            {
+                Labels = new YAxisLabels
+                {
+                    Formatter = "function(v){ return '$' + v.toFixed(2); }"
+                }
+            }
+        },
+        Stroke = new Stroke
+        {
+            Width    = new List<int> { 2, 2, 1, 1, 1, 1 },
+            DashArray = new List<int> { 0, 6, 4, 4, 2, 2 }
+        },
+        Legend  = new Legend { Position = LegendPosition.Top },
+        Tooltip = new Tooltip { Shared = true }
+    };
+
+    // ── Simulation ───────────────────────────────────────────────────────────
+    private async Task RunSimulation()
+    {
+        IsLoading    = true;
+        ErrorMessage = null;
+        Result       = null;
+        Forecast     = null;
+        Prices       = new();
+
+        try
+        {
+            Prices = await DataService.GetPricesAsync(Symbol, Interval, outputSize: 200);
+            Simulator.CalculateSMAs(Prices);
+            Simulator.CalculateRSI(Prices);
+            Simulator.CalculateMACD(Prices);
+            Result   = Simulator.RunStrategy(Prices, Config);
+            Forecast = Forecaster.Forecast(Prices, forwardPeriods: ForecastPeriods);
+            CandleOptions.Annotations = BuildTradeAnnotations(Result.Trades);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+
+        IsLoading = false;
+    }
+
+    private static Annotations BuildTradeAnnotations(List<Trade> trades)
+    {
+        var points = new List<AnnotationsPoint>();
+
+        foreach (var trade in trades)
+        {
+            long epochMs = ((DateTimeOffset)trade.Date).ToUnixTimeMilliseconds();
+            bool isBuy   = trade.Action == "BUY";
+
+            points.Add(new AnnotationsPoint
+            {
+                X = epochMs,
+                Y = (double)trade.Price,
+                Marker = new AnnotationMarker
+                {
+                    Size        = 10,
+                    FillColor   = isBuy ? "#00c853" : "#d62728",
+                    StrokeColor = "#ffffff",
+                    StrokeWidth = 2,
+                    Shape       = AnnotationMarkerShape.Circle
+                },
+                Label = new Label
+                {
+                    Text            = isBuy ? "BUY" : (trade.ExitReason ?? "SELL"),
+                    BorderColor     = isBuy ? "#00c853" : "#d62728",
+                    OffsetY         = isBuy ? 0 : -30,
+                    Style = new Style
+                    {
+                        Color      = "#ffffff",
+                        Background = isBuy ? "#00c853" : "#d62728"
+                    }
+                }
+            });
+        }
+
+        return new Annotations { Points = points };
+    }
+}
